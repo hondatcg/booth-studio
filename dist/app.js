@@ -99,16 +99,64 @@ function prepareExport(blob,name,{preview=null,json=null,description=''}={}){
 }
 function dataUrlBlob(url){const [header,body]=url.split(','),raw=atob(body),bytes=new Uint8Array(raw.length);for(let n=0;n<raw.length;n++)bytes[n]=raw.charCodeAt(n);return new Blob([bytes],{type:header.match(/data:([^;]+)/)[1]})}
 function makeExportCanvas(){
- controls.update();renderer.render(scene,camera);drawDimensions();const source=renderer.domElement,canvas=document.createElement('canvas');canvas.width=source.width;const scale=source.width/viewport.clientWidth,header=68*scale,footer=34*scale;canvas.height=source.height+header+footer;const ctx=canvas.getContext('2d');if(!ctx)throw Error('画像の作成に失敗しました');ctx.fillStyle='#ffffff';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.drawImage(source,0,header);ctx.save();ctx.scale(scale,scale);ctx.fillStyle='#224f44';ctx.font='600 19px sans-serif';ctx.fillText('Booth Studio',22,28);ctx.font='12px sans-serif';ctx.fillStyle='#617970';const views={iso:'斜め上',top:'真上',front:'正面',eye:'来場者目線'};ctx.fillText(`ブース ${state.booth.w.toLocaleString()} × ${state.booth.d.toLocaleString()} × 高さ ${state.booth.h.toLocaleString()} mm  /  ${views[view]}  /  ${state.items.length}アイテム`,22,50);
- if(state.dims){const base=viewport.getBoundingClientRect();document.querySelectorAll('.measure').forEach(el=>{const rect=el.getBoundingClientRect(),x=rect.left-base.left,y=rect.top-base.top+header/scale;if(x+rect.width<0||x>base.width||y<header/scale||y+rect.height>header/scale+base.height)return;ctx.fillStyle='#fffffff0';ctx.fillRect(x,y,rect.width,rect.height);ctx.fillStyle='#315d50';ctx.font='11px sans-serif';ctx.fillText(el.textContent,x+5,y+14)})}
- ctx.fillStyle='#6c7f76';ctx.font='10px sans-serif';ctx.fillText('寸法・重なり判定は目安です。実際の設営時は現物でご確認ください。',22,(canvas.height-footer)/scale+21);ctx.restore();return canvas;
+ controls.update();renderer.render(scene,camera);drawDimensions();
+ const source=renderer.domElement,canvas=document.createElement('canvas');
+ const sceneWidth=viewport.clientWidth,sceneHeight=viewport.clientHeight;
+ const sidebar=340,header=80,footer=36,padding=22;
+ const scratch=document.createElement('canvas').getContext('2d');
+ if(!scratch||!sceneWidth||!sceneHeight)throw Error('画像の作成に失敗しました');
+ function wrapName(name,maxWidth){
+  scratch.font='600 14px sans-serif';const lines=[];let line='';
+  for(const character of String(name)){if(line&&scratch.measureText(line+character).width>maxWidth){lines.push(line);line=character}else line+=character}
+  lines.push(line);return lines;
+ }
+ const number=new Intl.NumberFormat('ja-JP',{maximumFractionDigits:1});
+ const rows=state.items.map((item,index)=>{
+  const size=bounds(item.parts),nameLines=wrapName(`${index+1}. ${item.name}`,sidebar-padding*2);
+  return {nameLines,size:`${number.format(size.w)} × ${number.format(size.d)} × ${number.format(size.h)}`,height:nameLines.length*19+34};
+ });
+ const listHeight=70+rows.reduce((sum,row)=>sum+row.height,0)+padding;
+ const width=sidebar+sceneWidth,height=header+Math.max(sceneHeight,listHeight)+footer;
+ // Keep all rows, while staying within conservative browser canvas limits.
+ const scale=Math.min(2,16000/width,16000/height,Math.sqrt(24000000/(width*height)));
+ canvas.width=Math.ceil(width*scale);canvas.height=Math.ceil(height*scale);
+ const ctx=canvas.getContext('2d');if(!ctx)throw Error('画像の作成に失敗しました');
+ ctx.scale(scale,scale);ctx.fillStyle='#ffffff';ctx.fillRect(0,0,width,height);
+ ctx.fillStyle='#224f44';ctx.font='600 21px sans-serif';ctx.fillText('Booth Studio',padding,30);
+ ctx.font='12px sans-serif';ctx.fillStyle='#617970';
+ const views={iso:'斜め上',top:'真上',front:'正面',eye:'来場者目線'};
+ ctx.fillText(`ブース ${state.booth.w.toLocaleString()} × ${state.booth.d.toLocaleString()} × 高さ ${state.booth.h.toLocaleString()} mm  /  ${views[view]}  /  ${state.items.length}アイテム`,padding,54);
+ ctx.fillStyle='#f4f8f5';ctx.fillRect(0,header,sidebar,height-header-footer);
+ ctx.fillStyle='#263c3e';ctx.font='600 17px sans-serif';ctx.fillText('配置物サイズ一覧',padding,header+29);
+ ctx.fillStyle='#617970';ctx.font='12px sans-serif';ctx.fillText('幅 × 奥行き × 高さ（mm）',padding,header+51);
+ let y=header+70;
+ if(!rows.length){ctx.fillStyle='#617970';ctx.font='13px sans-serif';ctx.fillText('配置物はありません',padding,y+20)}
+ for(const row of rows){
+  ctx.fillStyle='#263c3e';ctx.font='600 14px sans-serif';
+  for(const nameLine of row.nameLines){ctx.fillText(nameLine,padding,y+17);y+=19}
+  ctx.fillStyle='#14776c';ctx.font='13px sans-serif';ctx.fillText(row.size,padding,y+17);
+  y+=34;ctx.strokeStyle='#dce6df';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(padding,y-8);ctx.lineTo(sidebar-padding,y-8);ctx.stroke();
+ }
+ ctx.strokeStyle='#dce6df';ctx.beginPath();ctx.moveTo(sidebar,header);ctx.lineTo(sidebar,height-footer);ctx.stroke();
+ ctx.drawImage(source,sidebar,header,sceneWidth,sceneHeight);
+ if(state.dims){
+  const base=viewport.getBoundingClientRect();
+  document.querySelectorAll('.measure').forEach(el=>{
+   const rect=el.getBoundingClientRect(),x=rect.left-base.left,y=rect.top-base.top;
+   if(x<0||x+rect.width>sceneWidth||y<0||y+rect.height>sceneHeight)return;
+   ctx.fillStyle='#fffffff0';ctx.fillRect(sidebar+x,header+y,rect.width,rect.height);
+   ctx.fillStyle='#315d50';ctx.font='11px sans-serif';ctx.fillText(el.textContent,sidebar+x+5,header+y+14);
+  });
+ }
+ ctx.fillStyle='#6c7f76';ctx.font='11px sans-serif';ctx.fillText('一覧は各配置物の寸法です。回転による設置範囲の変化は含みません。設営時は現物でご確認ください。',padding,height-14);
+ return canvas;
 }
 function handleExport(format){try{
  if(format==='json'){const json=JSON.stringify(state,null,2);prepareExport(new Blob([json],{type:'application/json;charset=utf-8'}),'booth-layout.json',{json,description:'ブース設定・配置アイテムの形状・位置・角度を含みます。「読み込み」で再編集できます。'});return}
  const canvas=makeExportCanvas(),png=canvas.toDataURL('image/png');if(png==='data:,')throw Error('表示サイズが小さすぎます');
- if(format==='png'){prepareExport(dataUrlBlob(png),'booth-layout.png',{preview:png,description:'現在の視点と、表示中の寸法をPNG画像に保存します。'});return}
+ if(format==='png'){prepareExport(dataUrlBlob(png),'booth-layout.png',{preview:png,description:'左側に配置物の名前と幅・奥行き・高さの一覧、右側に現在の視点のブース図をPNG画像に保存します。'});return}
  if(!window.jspdf?.jsPDF)throw Error('PDF機能を読み込めませんでした。再読み込みしてください');
- const pdf=new window.jspdf.jsPDF({orientation:'landscape',unit:'mm',format:'a4',compress:true});pdf.setProperties({title:'Booth Studio - Booth Layout',creator:'Booth Studio'});const maxW=277,maxH=190,r=Math.min(maxW/canvas.width,maxH/canvas.height),w=canvas.width*r,h=canvas.height*r;pdf.addImage(png,'PNG',(297-w)/2,(210-h)/2,w,h,undefined,'FAST');prepareExport(pdf.output('blob'),'booth-layout.pdf',{preview:png,description:'現在の視点と寸法を、A4横・1ページのPDFに保存します。図は用紙に収まる大きさに調整されます。'});
+ const pdf=new window.jspdf.jsPDF({orientation:'landscape',unit:'mm',format:'a4',compress:true});pdf.setProperties({title:'Booth Studio - Booth Layout',creator:'Booth Studio'});const maxW=277,maxH=190,r=Math.min(maxW/canvas.width,maxH/canvas.height),w=canvas.width*r,h=canvas.height*r;pdf.addImage(png,'PNG',(297-w)/2,(210-h)/2,w,h,undefined,'FAST');prepareExport(pdf.output('blob'),'booth-layout.pdf',{preview:png,description:'配置物のサイズ一覧を左側、現在の視点のブース図を右側に配置し、A4横・1ページのPDFに保存します。'});
  }catch(e){toast('エクスポートできませんでした：'+e.message)}
 }
 $('exportJson').onclick=()=>handleExport('json');$('exportPng').onclick=()=>handleExport('png');$('exportPdf').onclick=()=>handleExport('pdf');

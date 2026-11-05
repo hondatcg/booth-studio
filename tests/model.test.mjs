@@ -1,0 +1,14 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {bounds,resizeItem,localPoint,dimensionGeometry,History,normalizeExtras,validateExtras} from '../dist/model.mjs';
+import {buildDrawing,makeDxf,partEdges} from '../dist/drawings.mjs';
+import {writeFileSync} from 'node:fs';
+const part={x:0,y:0,z:0,w:1500,d:600,h:740,shape:'box',color:'#c9bba1',opacity:1};
+const item={id:'desk',name:'机',parts:[part],x:700,y:0,z:650,angle:37};
+const close=(a,b)=>a.forEach((v,n)=>assert.ok(Math.abs(v-b[n])<1e-7,`${v} != ${b[n]}`));
+test('resizing a rotated object keeps the opposite face fixed',()=>{for(const key of ['w','d','h'])for(const side of [-1,1])for(const uniform of [true,false]){const before=structuredClone(item),after=resizeItem(before,key,1000,side,uniform);const anchor=key==='w'?[side===1?0:1,.5,0]:key==='d'?[.5,side===1?0:1,0]:[.5,.5,side===1?0:1];close(localPoint(before,...anchor),localPoint(after,...anchor));assert.equal(bounds(after.parts)[key],1000);assert.deepEqual(before,item);}});
+test('minimum part size survives uniform shrinking',()=>{const i={...item,parts:[part,{...part,w:1,h:1,d:1}]};const a=resizeItem(i,'w',1,1,true);assert.ok(a.parts.every(p=>p.w>=1&&p.d>=1&&p.h>=1));});
+test('attached dimensions follow movement, rotation and resize; missing targets are ignored',()=>{const s=normalizeExtras({booth:{w:3000,d:3000,h:2700},items:[{...structuredClone(item),angle:0}]});const d={a:{type:'booth',u:0,v:.3},b:{type:'item',id:'desk',u:0,v:.5},axis:'x',offset:180};assert.equal(dimensionGeometry(d,s).value,700);s.items[0].x=800;assert.equal(dimensionGeometry(d,s).value,800);s.items[0].angle=90;assert.equal(Math.round(dimensionGeometry(d,s).value),1550);s.items=[];assert.equal(dimensionGeometry(d,s),null);});
+test('history clears redo branch and keeps independent snapshots',()=>{const h=new History({n:0},2),x={n:1};h.record(x);x.n=55;assert.equal(h.move(-1).n,0);assert.equal(h.move(1).n,1);h.record({n:2});h.move(-1);h.record({n:3});assert.equal(h.canRedo,false);assert.equal(h.move(-1).n,1);assert.equal(h.move(-1).n,0);assert.equal(h.move(-1),null);});
+test('old layouts migrate and invalid extra data is rejected',()=>{const s={booth:{},items:[]};validateExtras(s);assert.deepEqual(s.dimensions,[]);assert.equal(s.lighting.enabled,false);assert.throws(()=>validateExtras({...s,dimensions:[{a:{},b:{}}]}));assert.throws(()=>validateExtras({...s,items:[{light:{power:-1}}]}));});
+test('three projections use rotated part geometry and include user dimensions',()=>{const s=normalizeExtras({booth:{w:3000,d:3000,h:2700,back:true,left:true},items:[item]});for(const id of ['top','front','side']){const d=buildDrawing(s,id);assert.ok(d.lines.length>20);assert.ok(d.lines.every(l=>[...l.a,...l.b].every(Number.isFinite)));assert.ok(d.texts.some(t=>t.text==='3000'));}assert.equal(partEdges(item,part).length,12);writeFileSync('/tmp/booth-test.dxf',makeDxf(s));});
